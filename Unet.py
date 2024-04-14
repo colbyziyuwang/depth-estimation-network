@@ -15,15 +15,15 @@ This module can be used to instantiate a U-Net model for disparity estimation, a
 
 import torch
 import torch.nn as nn
-import torchvision.models as models
+import torch.nn.functional as F
 
 class UNet(nn.Module):
     """
     UNet Architecture for Stereo Image Disparity Estimation.
 
-    This implementation of the U-Net architecture is specifically tailored for processing images from the Tsukuba dataset, which are of size 384x288 pixels. The U-Net model is a convolutional neural network that excels at tasks requiring precise localization, such as disparity estimation in stereo vision. It features a symmetric encoder-decoder structure with skip connections, enabling the capture of context at various resolutions and the precise localization of features.
+    This implementation of the U-Net architecture is specifically tailored for processing images from the Tsukuba dataset, which are of size 288x384 pixels. The U-Net model is a convolutional neural network that excels at tasks requiring precise localization, such as disparity estimation in stereo vision. It features a symmetric encoder-decoder structure with skip connections, enabling the capture of context at various resolutions and the precise localization of features.
 
-    The model is designed to accept input images of size 384x288, aligning with the dimensions of the Tsukuba stereo image pairs. It applies a series of convolutional, activation, and pooling layers to downsample the input, then progressively upsamples and concatenates the feature maps to predict the disparity map with the same resolution as the input.
+    The model is designed to accept input images of size 288x384, aligning with the dimensions of the Tsukuba stereo image pairs. It applies a series of convolutional, activation, and pooling layers to downsample the input, then progressively upsamples and concatenates the feature maps to predict the disparity map with the same resolution as the input.
 
     Methods:
         __init__: Initializes the U-Net model with the necessary layers and parameters tailored for the Tsukuba dataset's image size.
@@ -55,7 +55,7 @@ class UNet(nn.Module):
 
         # Decoder
         # First decoder block (upsampling + concatenation + convolution)
-        self.dec_upsample1 = nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=2, stride=2)  # First upsample (doubles the size)
+        self.dec_upsample1 = nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=2, stride=2) # first upsample
         self.dec_conv1 = nn.Conv2d(in_channels=256 + 256, out_channels=128, kernel_size=(3,3), padding=1)  # Convolution after concatenation with enc_conv3's output
 
         # Second decoder block
@@ -105,21 +105,20 @@ class UNet(nn.Module):
         enc4 = self.enc_relu4(self.enc_conv4(pool3))
         pool4 = self.enc_pool4(enc4)
 
-        # Decoder
-        
+        # Decoder     
         # Upsample, then concatenate with the corresponding encoder output
         up1 = self.dec_upsample1(pool4)
-        
+
         # Concatenate along the channel dimension
-        dec1 = torch.cat((up1, enc3), dim=1)
+        dec1 = torch.cat((up1, pool3), dim=1)
         dec1 = self.dec_conv1(dec1)
 
         up2 = self.dec_upsample2(dec1)
-        dec2 = torch.cat((up2, enc2), dim=1)
+        dec2 = torch.cat((up2, pool2), dim=1)
         dec2 = self.dec_conv2(dec2)
 
         up3 = self.dec_upsample3(dec2)
-        dec3 = torch.cat((up3, enc1), dim=1)
+        dec3 = torch.cat((up3, pool1), dim=1)
         dec3 = self.dec_conv3(dec3)
 
         up4 = self.dec_upsample4(dec3)
@@ -129,7 +128,7 @@ class UNet(nn.Module):
         dec4 = self.dec_conv4(dec4)
         
         # disparity map
-        right_disparity = F.softmax(dec4, dim=1) # [batch_size, height, width]
+        right_disparity = F.softmax(dec4, dim=1) # [height, width]
         predicted_disparity = torch.argmax(right_disparity, dim=1)
         
         # if x's batch dim is 1 then remove it
@@ -138,3 +137,17 @@ class UNet(nn.Module):
         
         # right disparity is positive
         return predicted_disparity
+
+if __name__ == "__main__":
+    # Initialize your network
+    net = UNet()
+
+    # Create a dummy input tensor that matches the expected input dimensions
+    dummy_input = torch.randn(1, 3, 288, 384)  # (batch, channel, height, width)
+
+    # Perform a forward pass
+    try:
+        output = net(dummy_input)
+        print("Forward pass successful. Output shape:", output.shape)
+    except Exception as e:
+        print("Error during forward pass:", e)
