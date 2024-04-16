@@ -68,8 +68,9 @@ class UNet(nn.Module):
 
         # Fourth (final) decoder block
         self.dec_upsample4 = nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=2, stride=2)  # Last upsample
-        self.dec_conv4 = nn.Conv2d(in_channels=16 + 3, out_channels=389, kernel_size=(3,3), padding=1)  # Final convolution combines features with original image
-        
+        self.dec_conv4a = nn.Conv2d(in_channels=16 + 3, out_channels=1, kernel_size=(3,3), padding=1)  # Final convolution combines features with original image
+        self.dec_conv4b = nn.Conv2d(in_channels=16 + 3, out_channels=1, kernel_size=(3,3), padding=1)
+
     def forward(self, x):
         """
         Forward pass of the UNet model.
@@ -125,18 +126,20 @@ class UNet(nn.Module):
         
         # The initial image 'x' is concatenated in the last layer
         dec4 = torch.cat((up4, x), dim=1)
-        dec4 = self.dec_conv4(dec4)
-        
+        dec4a = self.dec_conv4a(dec4)
+        dec4b = self.dec_conv4b(dec4)
+
         # disparity map
-        right_disparity = F.softmax(dec4, dim=1) # [height, width]
-        predicted_disparity = torch.argmax(right_disparity, dim=1)
-        
+        right_disparity = dec4a
+        left_disparity = dec4b
+         
         # if x's batch dim is 1 then remove it
-        if predicted_disparity.size(0) == 1:
-            predicted_disparity = predicted_disparity.squeeze(0)
-        
+        if right_disparity.size(0) == 1:
+            right_disparity = right_disparity.squeeze(0).squeeze(0)
+            left_disparity = left_disparity.squeeze(0).squeeze(0)
+
         # right disparity is positive
-        return predicted_disparity
+        return right_disparity, left_disparity
 
 if __name__ == "__main__":
     # Initialize your network
@@ -147,7 +150,7 @@ if __name__ == "__main__":
 
     # Perform a forward pass
     try:
-        output = net(dummy_input)
-        print("Forward pass successful. Output shape:", output.shape)
+        output_right, output_left = net(dummy_input)
+        print("Forward pass successful. Output shape:", output_left.shape)
     except Exception as e:
         print("Error during forward pass:", e)
