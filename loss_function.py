@@ -25,31 +25,40 @@ class MonocularDepthLoss(nn.Module):
         """
         Initialize the object
         """
-        alpha = 0.5
-        beta = 0.5
-        gamma = 5.0
-        
-
         super(MonocularDepthLoss, self).__init__()
-    
-    def reconstruct_image(image, disparity_map):
-        IMAGE_SIZE = image.shape
+        self.alpha = 0.5
+        self.beta = 0.5
+        self.gamma = 5.0
 
-        x_incidies -= disparity_map * (IMAGE_SIZE[1] * 0.1) # max disparity
-        x_indicies_clamped = torch.clamp(x_incidies, 0, IMAGE_SIZE[1] - 1) # adjust to have it stay within range
-        
-        # interpolate pixel values
-        x_indices_floor = torch.floor(x_indicies_clamped).type(torch.LongTensor)
-        x_indices_ceil = torch.clamp(x_indices_floor + 1, 0, IMAGE_SIZE[1] - 1)
+    def reconstruct_image(self, image, disparity_map):
+        IMAGE_SIZE = image.shape  # [N, C, H, W]
 
-        interpolated_values_floor = torch.gather(image, 3, x_indices_floor)
-        interpolated_values_ceil = torch.gather(image, 3, x_indices_ceil)
+        # Calculate the shifted indices along the width (disparity adjustment)
+        x_indices = disparity_map * (IMAGE_SIZE[3] * 0.1)  # Max disparity
+        x_indices_clamped = torch.clamp(x_indices, 0, IMAGE_SIZE[3] - 1)
 
-        interpolate_combine = (x_indices_ceil - x_indicies_clamped) * interpolated_values_floor + (x_indicies_clamped - x_indices_floor) * interpolated_values_ceil
+        # Floor and ceil indices for interpolation
+        x_indices_floor = torch.floor(x_indices_clamped).long()
+        x_indices_ceil = torch.clamp(x_indices_floor + 1, 0, IMAGE_SIZE[3] - 1)
+
+        # Ensure indices are usable for gather; preparing for gather along width dimension
+        # The gather operation should be applied across the width dimension
+        gather_indices_floor = x_indices_floor.expand(-1, IMAGE_SIZE[1], -1, -1)  # Shape to [N, C, H, W]
+        gather_indices_ceil = x_indices_ceil.expand(-1, IMAGE_SIZE[1], -1, -1)  # Shape to [N, C, H, W]
+
+        # Gathering pixel values for floor and ceiling indices along the width dimension
+        interpolated_values_floor = torch.gather(image, 3, gather_indices_floor)
+        interpolated_values_ceil = torch.gather(image, 3, gather_indices_ceil)
+
+        # Calculate weights for linear interpolation
+        weights = (x_indices_clamped - x_indices_floor).expand_as(interpolated_values_floor)
+
+        # Linear interpolation between floor and ceiling values
+        interpolate_combine = weights * interpolated_values_ceil + (1 - weights) * interpolated_values_floor
 
         return interpolate_combine
 
-    def forward(self, disparity_map_left, right_image, left_image, disparity_map_right=None):
+    def forward(self, disparity_map_left, right_image, left_image, disparity_map_right):
         """
         Calculate the loss based on the input disparity map(s) and images.
 
@@ -66,18 +75,28 @@ class MonocularDepthLoss(nn.Module):
 
         # photoconsistency term
         predicted_left_image = self.reconstruct_image(right_image, disparity_map_left)
-        ssim_output = ssim.SSIM(window_size=5) * -1
+        ssim_object = ssim.SSIM(window_size=5)
+
+        # Calculate SSIM using the forward method
+        ssim_output = ssim_object.forward(left_image, predicted_left_image)
         mse_function = nn.MSELoss()
         mse_ouput = mse_function(left_image, predicted_left_image)
 
         # smoothness term
-        vertical_gradient = torch.square(left_image - torch.roll(left_image, 1, 2)).sum(1)
-        horizontal_gradient = torch.square(left_image - torch.roll(left_image, 1, 3)).sum(1)
+        # Calculate image gradients by squaring the differences after a roll operation
+        vertical_gradient = torch.square(left_image - torch.roll(left_image, shifts=1, dims=2)).sum(1)  # Sum over the channel dimension
+        horizontal_gradient = torch.square(left_image - torch.roll(left_image, shifts=1, dims=3)).sum(1)  # Sum over the channel dimension
 
-        vertical_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, 1, 2)).view(-1, IMAGE_SIZE[0], IMAGE_SIZE[1])
-        horizontal_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, 1, 3)).view(-1, IMAGE_SIZE[0], IMAGE_SIZE[1])
+        # Calculate disparity gradients
+        vertical_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, shifts=1, dims=2))
+        horizontal_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, shifts=1, dims=3))
 
-        smoothness_term = self.gamma * (torch.mean(vertical_disparity_gradient * torch.exp(-vertical_gradient)) + torch.mean(horizontal_disparity_gradient * torch.exp(-horizontal_gradient)))
+        # Apply exponential decay on image gradients and multiply by disparity gradients
+        vertical_term = torch.mean(vertical_disparity_gradient * torch.exp(-vertical_gradient))
+        horizontal_term = torch.mean(horizontal_disparity_gradient * torch.exp(-horizontal_gradient))
+
+        # Combine the smoothness terms weighted by gamma
+        smoothness_term = self.gamma * (vertical_term + horizontal_term)
 
         loss = self.alpha * ssim_output + self.beta * mse_ouput + smoothness_term
         return loss

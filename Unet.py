@@ -89,9 +89,6 @@ class UNet(nn.Module):
         Returns:
             torch.Tensor: The output tensor with predicted values, having the same height and width as the input but with a single channel (N, 1, H, W).
         """
-        # batchify x
-        if x.dim() == 3:
-            x = x.unsqueeze(0)  # Adds a dimension of size 1 at the specified position 0
 
         # Encoder
         enc1 = self.enc_relu1(self.enc_conv1(x))
@@ -132,13 +129,7 @@ class UNet(nn.Module):
         # disparity map
         right_disparity = dec4a
         left_disparity = dec4b
-         
-        # if x's batch dim is 1 then remove it
-        if right_disparity.size(0) == 1:
-            right_disparity = right_disparity.squeeze(0).squeeze(0)
-            left_disparity = left_disparity.squeeze(0).squeeze(0)
-
-        # right disparity is positive
+        
         return right_disparity, left_disparity
 
 if __name__ == "__main__":
