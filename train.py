@@ -43,12 +43,15 @@ for epoch in tqdm(range(epochs), desc="Training Epochs"):
 
 print("Training complete. The model should have overfit to the single image.")
 
-# Plotting the training loss
 plt.figure(figsize=(10, 5))
 plt.plot(loss_history, label='Training Loss')
 plt.title('Training Loss Over Epochs')
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
 plt.legend()
-plt.show()
 
+# Save the plot as a PNG file
+plt.savefig('training_loss.png')  # You can specify a different path or file name
+
+# Close the plot
+plt.close()
