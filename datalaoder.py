@@ -26,7 +26,7 @@ class CustomDataset(Dataset):
         self.transform = transform
         for sub_dir in sub_dirs:
             full_dir_path = os.path.join(root_dir, sub_dir)
-            for imagename in os.listdir(full_dir_path):
+            for imagename in sorted(os.listdir(full_dir_path)):
                 image_path = os.path.join(full_dir_path, imagename)
                 self.data_paths[sub_dir].append(image_path)
         
