@@ -28,13 +28,13 @@ class MonocularDepthLoss(nn.Module):
         super(MonocularDepthLoss, self).__init__()
         self.alpha = 0.5
         self.beta = 0.5
-        self.gamma = 5.0
+        self.gamma = 10.0
 
     def reconstruct_image(self, image, disparity_map):
         IMAGE_SIZE = image.shape  # [N, C, H, W]
 
         # Calculate the shifted indices along the width (disparity adjustment)
-        x_indices = disparity_map * (IMAGE_SIZE[3] * 0.1)  # Max disparity
+        x_indices = disparity_map * (IMAGE_SIZE[3] * 0.3)  # Max disparity
         x_indices_clamped = torch.clamp(x_indices, 0, IMAGE_SIZE[3] - 1)
 
         # Floor and ceil indices for interpolation
@@ -78,7 +78,7 @@ class MonocularDepthLoss(nn.Module):
         ssim_object = ssim.SSIM(window_size=5)
 
         # Calculate SSIM using the forward method
-        ssim_output = ssim_object.forward(left_image, predicted_left_image)
+        ssim_output = -1 * ssim_object(left_image, predicted_left_image)
         mse_function = nn.MSELoss()
         mse_ouput = mse_function(left_image, predicted_left_image)
 
@@ -97,7 +97,10 @@ class MonocularDepthLoss(nn.Module):
 
         # Combine the smoothness terms weighted by gamma
         smoothness_term = self.gamma * (vertical_term + horizontal_term)
-
+        
+        #print(ssim_output)
+        #print(mse_ouput)
+        #print(smoothness_term)
         loss = self.alpha * ssim_output + self.beta * mse_ouput + smoothness_term
-        return loss
+        return loss, predicted_left_image
 
