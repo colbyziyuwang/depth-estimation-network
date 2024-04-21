@@ -1,106 +1,104 @@
-"""
-Monocular Depth Estimation Loss Function Module.
-
-This module defines a custom loss function class used in monocular depth estimation tasks with neural networks. This is achieved via the MonocularDepthLoss class.
-
-The class is structured to be filled in with specific loss calculation logic by Alex Wang. Note it is required to use PyTorch tensors to ensure compatibility with PyTorch's automatic differentiatio features, crucial for effective backpropagation in neural network training.
-
-"""
-
 import torch
 import torch.nn as nn
 import extlibs.pytorch_ssim as ssim
+import torch.nn.functional as F
 
-class MonocularDepthLoss(nn.Module):
-    """
-    This class defines a loss function used in monocular depth estimation.
-    The loss function works as follows:
-    1) Shift the pixels of the left image to generate the pseudo right image
-    2) Shift the pixels of the right image to generate the pseudo left image
-    3) Compare the pseudo right image and pseudo left image with real right image, and real
-       left image, respectively. Use mean squared error for loss calculations
-    """
-
-    def __init__(self):
-        """
-        Initialize the object
-        """
+class MonocularDepthLoss(nn.modules.Module):
+    def __init__(self, alpha=0.80, beta=1.0, gamma=1.0):
         super(MonocularDepthLoss, self).__init__()
-        self.alpha = 0.5
-        self.beta = 0.5
-        self.gamma = 10.0
-
-    def reconstruct_image(self, image, disparity_map):
-        IMAGE_SIZE = image.shape  # [N, C, H, W]
-
-        # Calculate the shifted indices along the width (disparity adjustment)
-        x_indices = disparity_map * (IMAGE_SIZE[3] * 0.3)  # Max disparity
-        x_indices_clamped = torch.clamp(x_indices, 0, IMAGE_SIZE[3] - 1)
-
-        # Floor and ceil indices for interpolation
-        x_indices_floor = torch.floor(x_indices_clamped).long()
-        x_indices_ceil = torch.clamp(x_indices_floor + 1, 0, IMAGE_SIZE[3] - 1)
-
-        # Ensure indices are usable for gather; preparing for gather along width dimension
-        # The gather operation should be applied across the width dimension
-        gather_indices_floor = x_indices_floor.expand(-1, IMAGE_SIZE[1], -1, -1)  # Shape to [N, C, H, W]
-        gather_indices_ceil = x_indices_ceil.expand(-1, IMAGE_SIZE[1], -1, -1)  # Shape to [N, C, H, W]
-
-        # Gathering pixel values for floor and ceiling indices along the width dimension
-        interpolated_values_floor = torch.gather(image, 3, gather_indices_floor)
-        interpolated_values_ceil = torch.gather(image, 3, gather_indices_ceil)
-
-        # Calculate weights for linear interpolation
-        weights = (x_indices_clamped - x_indices_floor).expand_as(interpolated_values_floor)
-
-        # Linear interpolation between floor and ceiling values
-        interpolate_combine = weights * interpolated_values_ceil + (1 - weights) * interpolated_values_floor
-
-        return interpolate_combine
-
-    def forward(self, disparity_map_left, right_image, left_image, disparity_map_right):
-        """
-        Calculate the loss based on the input disparity map(s) and images.
-
-        Parameters:
-        disparity_map_left (Tensor): The predicted disparity map for the left image.
-        right_image (Tensor): The right image tensor.
-        left_image (Tensor): The left image tensor.
-        disparity_map_right (Tensor, optional): The ground truth disparity map for the right image.
-
-        Returns:
-        Tensor: The calculated loss.
-        """
-        IMAGE_SIZE = left_image.shape
-
-        # photoconsistency term
-        predicted_left_image = self.reconstruct_image(right_image, disparity_map_left)
-        ssim_object = ssim.SSIM(window_size=5)
-
-        # Calculate SSIM using the forward method
-        ssim_output = -1 * ssim_object(left_image, predicted_left_image)
-        mse_function = nn.MSELoss()
-        mse_ouput = mse_function(left_image, predicted_left_image)
-
-        # smoothness term
-        # Calculate image gradients by squaring the differences after a roll operation
-        vertical_gradient = torch.square(left_image - torch.roll(left_image, shifts=1, dims=2)).sum(1)  # Sum over the channel dimension
-        horizontal_gradient = torch.square(left_image - torch.roll(left_image, shifts=1, dims=3)).sum(1)  # Sum over the channel dimension
-
-        # Calculate disparity gradients
-        vertical_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, shifts=1, dims=2))
-        horizontal_disparity_gradient = torch.abs(disparity_map_left - torch.roll(disparity_map_left, shifts=1, dims=3))
-
-        # Apply exponential decay on image gradients and multiply by disparity gradients
-        vertical_term = torch.mean(vertical_disparity_gradient * torch.exp(-vertical_gradient))
-        horizontal_term = torch.mean(horizontal_disparity_gradient * torch.exp(-horizontal_gradient))
-
-        # Combine the smoothness terms weighted by gamma
-        smoothness_term = self.gamma * (vertical_term + horizontal_term)
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+    
+    def apply_disparity(self, img, disp):
+        batch_size, _, height, width = img.size()
         
-        #print(ssim_output)
-        #print(mse_ouput)
-        #print(smoothness_term)
-        loss = self.alpha * ssim_output + self.beta * mse_ouput + smoothness_term
-        return loss, predicted_left_image
+        x_og_coord = torch.linspace(0, 1, width).repeat(batch_size,
+                    height, 1).type_as(img)
+        y_og_coord = torch.linspace(0, 1, height).repeat(batch_size,
+                    width, 1).transpose(1, 2).type_as(img)
 
+        # shift horizontally
+        x_shifts = disp[:, 0, :, :]  
+        flow_field = torch.stack((x_og_coord + x_shifts, y_og_coord), dim=3)
+
+        # grid sample coordinates shoudl be between -1 and 1
+        output = F.grid_sample(img, 2*flow_field - 1, mode='bilinear',
+                               padding_mode='zeros')
+
+        return output
+
+    def SSIM(self, x, y):
+        C1, C2 = 0.01 ** 2, 0.03 ** 2
+
+        mu_x = nn.AvgPool2d(3, 1)(x)
+        mu_y = nn.AvgPool2d(3, 1)(y)
+
+        sigma_x = nn.AvgPool2d(3, 1)(x * x) - mu_x.pow(2)
+        sigma_y = nn.AvgPool2d(3, 1)(y * y) - mu_y.pow(2)
+        sigma_xy = nn.AvgPool2d(3, 1)(x * y) - mu_x * mu_y
+
+        ssim_n = (2 * mu_x * mu_y + C1) * (2 * sigma_xy + C2)
+        ssim_d = (mu_x.pow(2) + mu_y.pow(2) + C1) * (sigma_x + sigma_y + C2)
+        SSIM = ssim_n / ssim_d
+
+        return torch.clamp((1 - SSIM) / 2, 0, 1)
+    
+    def get_gradient_x(self, img):
+        img = F.pad(img, (0, 1, 0, 0), mode="replicate")
+        gx = img[:, :, :, :-1] - img[:, :, :, 1:]  # NCHW
+        return gx
+
+    def get_gradient_y(self, img):
+        img = F.pad(img, (0, 0, 0, 1), mode="replicate")
+        gy = img[:, :, :-1, :] - img[:, :, 1:, :]  # NCHW
+        return gy
+
+    def get_disp_smoothness(self, disparity, image):
+        disp_gradients_x = self.get_gradient_x(disparity)
+        disp_gradients_y = self.get_gradient_y(disparity)
+
+        image_gradients_x = self.get_gradient_x(image)
+        image_gradients_y = self.get_gradient_y(image)
+
+        weights_x = torch.exp(-torch.mean(torch.abs(image_gradients_x), 1,
+                     keepdim=True))
+        weights_y = torch.exp(-torch.mean(torch.abs(image_gradients_y), 1,
+                     keepdim=True))
+
+        smoothness_x = disp_gradients_x * weights_x
+        smoothness_y = disp_gradients_y * weights_y
+
+        return torch.abs(smoothness_x) + torch.abs(smoothness_y)
+
+    def forward(self, disparity_map_left, left_image, right_image, disparity_map_right):
+        # photo consistency
+        predicted_left_img = self.apply_disparity(right_image, -disparity_map_left)
+        predicted_right_img = self.apply_disparity(left_image, disparity_map_right) 
+
+        l1_left = torch.mean(torch.abs(predicted_left_img - left_image)) 
+        l1_right = torch.mean(torch.abs(predicted_right_img- right_image)) 
+        ssim_left = torch.mean(self.SSIM(predicted_left_img,left_image)) # SSIM
+        ssim_right = torch.mean(self.SSIM(predicted_right_img, right_image))
+
+        image_loss_left = [self.alpha * ssim_left + (1 - self.alpha) * l1_left]
+        image_loss_right = [self.alpha * ssim_right + (1 - self.alpha) * l1_right]
+        image_loss = sum(image_loss_left + image_loss_right)
+
+        # LR consistency
+        RL_disparity = self.apply_disparity(disparity_map_right, -disparity_map_left) 
+        LR_disparity = self.apply_disparity(disparity_map_left,  disparity_map_right) 
+        LR_left_loss = [torch.mean(torch.abs(RL_disparity - disparity_map_left))] 
+        LR_right_loss = [torch.mean(torch.abs(LR_disparity- disparity_map_right))]
+        LR_loss = sum(LR_left_loss + LR_right_loss)
+
+        # Disparities smoothness
+        left_smoothness = self.get_disp_smoothness(disparity_map_left, left_image)
+        right_smoothness = self.get_disp_smoothness(disparity_map_right, right_image)
+        right_loss = [torch.mean(torch.abs(left_smoothness))]
+        left_loss = [torch.mean(torch.abs(right_smoothness))]
+        gradient_loss = sum(left_loss + right_loss)
+
+        loss = image_loss + self.beta * gradient_loss + self.gamma * LR_loss
+
+        return loss
