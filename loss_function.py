@@ -34,7 +34,7 @@ class MonocularDepthLoss(nn.Module):
         IMAGE_SIZE = image.shape  # [N, C, H, W]
 
         # Calculate the shifted indices along the width (disparity adjustment)
-        x_indices = disparity_map * (IMAGE_SIZE[3] * 0.3)  # Max disparity
+        x_indices = disparity_map * (IMAGE_SIZE[3] * 1)  # Max disparity
         x_indices_clamped = torch.clamp(x_indices, 0, IMAGE_SIZE[3] - 1)
 
         # Floor and ceil indices for interpolation
