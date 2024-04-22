@@ -4,7 +4,7 @@ import extlibs.pytorch_ssim as ssim
 import torch.nn.functional as F
 
 class MonocularDepthLoss(nn.modules.Module):
-    def __init__(self, alpha=1.0, beta=1.0, gamma=1.0):
+    def __init__(self, alpha=0.8, beta=1.0, gamma=1.0):
         super(MonocularDepthLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
@@ -73,8 +73,8 @@ class MonocularDepthLoss(nn.modules.Module):
 
     def forward(self, disparity_map_left, left_image, right_image, disparity_map_right):
         # photo consistency
-        predicted_left_img = self.apply_disparity(right_image, disparity_map_left)
-        predicted_right_img = self.apply_disparity(left_image, -disparity_map_right) 
+        predicted_left_img = self.apply_disparity(right_image, -disparity_map_left)
+        predicted_right_img = self.apply_disparity(left_image, disparity_map_right) 
 
         l1_left = torch.mean(torch.abs(predicted_left_img - left_image)) 
         l1_right = torch.mean(torch.abs(predicted_right_img- right_image)) 
@@ -86,8 +86,8 @@ class MonocularDepthLoss(nn.modules.Module):
         image_loss = sum(image_loss_left + image_loss_right)
 
         # LR consistency
-        RL_disparity = self.apply_disparity(disparity_map_right, disparity_map_left) 
-        LR_disparity = self.apply_disparity(disparity_map_left,  -disparity_map_right) 
+        RL_disparity = self.apply_disparity(disparity_map_right, -disparity_map_left) 
+        LR_disparity = self.apply_disparity(disparity_map_left,  disparity_map_right) 
         LR_left_loss = [torch.mean(torch.abs(RL_disparity - disparity_map_left))] 
         LR_right_loss = [torch.mean(torch.abs(LR_disparity- disparity_map_right))]
         LR_loss = sum(LR_left_loss + LR_right_loss)
