@@ -4,7 +4,7 @@ import extlibs.pytorch_ssim as ssim
 import torch.nn.functional as F
 
 class MonocularDepthLoss(nn.modules.Module):
-    def __init__(self, alpha=0.8, beta=1.0, gamma=1.0):
+    def __init__(self, alpha=0.2, beta=1.0, gamma=1.0):
         super(MonocularDepthLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
