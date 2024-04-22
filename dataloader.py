@@ -26,10 +26,12 @@ class CustomDataset(Dataset):
         self.transform = transform
         for sub_dir in sub_dirs:
             full_dir_path = os.path.join(root_dir, sub_dir)
-            for imagename in sorted(os.listdir(full_dir_path)):
+            sorted_filenames = sorted(os.listdir(full_dir_path))  # Sort filenames alphabetically
+            sorted_filenames = sorted_filenames[:250]  # Limit to the first 250 images
+            for imagename in sorted_filenames:
                 image_path = os.path.join(full_dir_path, imagename)
                 self.data_paths[sub_dir].append(image_path)
-        
+
     def __len__(self):
         return len(self.data_paths[LEFT])
 
