@@ -101,4 +101,4 @@ class MonocularDepthLoss(nn.modules.Module):
 
         loss = image_loss + self.beta * gradient_loss + self.gamma * LR_loss
 
-        return loss, predicted_left_img
+        return loss, predicted_left_img, predicted_right_img
